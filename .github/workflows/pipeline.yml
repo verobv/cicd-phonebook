@@ -1,0 +1,93 @@
+name: Deployment pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:      
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6        
+        with:          
+          node-version: '24'
+      - name: Install dependencies        
+        run: npm install
+      - name: Check style        
+        run: npm run eslint
+      - name: Run npm test
+        run: npm test
+      - name: Run npm build
+        run: npm run build
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      - name: Run Playwright tests
+        run: npm run test:e2e
+
+  deploy:
+    needs: [build_and_test]
+    if: ${{ github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployment
+        run: curl ${{ secrets.RENDER_DEPLOY_HOOK }} 
+
+  notify_success:
+    needs: [deploy]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(join(github.event.commits.*.message, ' '), '#skip') && needs.build_and_test.result == 'success' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notifying success
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          content: '✅ Deployment Successful! A new version deployed to production'
+          title: "Deployment details"
+          description: |
+            **Commit:** ${{ github.sha }}
+            **Message:** ${{ github.event_name == 'push' && github.event.head_commit.message || github.event.pull_request.title }}
+            **Author:** ${{ github.actor }}
+          color: 0x00ff00
+
+  notify_failure: 
+    needs: [build_and_test, deploy]
+    if: ${{ always() && contains(join(needs.*.result, ','), 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notifying failure
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          content: '❌ Build Failed! The pipeline encountered an error'
+          title: "Failure Details"
+          description: |
+            **Repository:** ${{ github.repository }}
+            **Branch:** ${{ github.ref_name }}
+            **Commit:** ${{ github.sha }}
+            **Message:** ${{ github.event_name == 'push' && github.event.head_commit.message || github.event.pull_request.title }}
+            **Author:** ${{ github.actor }}
+            **Workflow:**  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Job:** ${{ github.job }}
+
+            [View Commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            [View Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          color: 0xff0000
+  
+  tag_release:
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && !contains(join(github.event.commits.*.message, ' '), '#skip') }} 
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Bump version and push tag
+        uses: anothrNick/github-tag-action@4ed44965e0db8dab2b466a16da04aec3cc312fd8
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: patch     
