@@ -16,18 +16,25 @@ jobs:
       - uses: actions/setup-node@v6        
         with:          
           node-version: '24'
-      - name: Install dependencies        
-        run: npm install
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
       - name: Check style        
-        run: npm run eslint
+        run: npm run lint
       - name: Run npm test
         run: npm test
-      - name: Run npm build
+        env:
+          MONGODB_URI_TEST: ${{ secrets.MONGODB_URI_TEST }}
+      - name: Run frontent build
         run: npm run build
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
       - name: Run Playwright tests
         run: npm run test:e2e
+        env:
+          MONGODB_URI_TEST: ${{ secrets.MONGODB_URI_TEST }}
 
   deploy:
     needs: [build_and_test]
